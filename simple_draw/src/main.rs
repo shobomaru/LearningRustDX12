@@ -2,8 +2,13 @@ use windows::{
     core::*, Win32::Foundation::*, Win32::Graphics::Direct3D::Fxc::*, Win32::Graphics::Direct3D::*,
     Win32::Graphics::Direct3D12::*, Win32::Graphics::Dxgi::Common::*, Win32::Graphics::Dxgi::*,
     Win32::System::LibraryLoader::*, Win32::System::Threading::*,
-    Win32::System::WindowsProgramming::*, Win32::UI::WindowsAndMessaging::*,
+    Win32::UI::WindowsAndMessaging::*,
+    Win32::Security::*, Win32::System::Memory::*,
 };
+use std::sync::{Arc, atomic::AtomicUsize};
+use libc::{c_uint, c_char};
+
+extern crate libc;
 
 const WINDOW_WIDTH: u32 = 640;
 const WINDOW_HEIGHT: u32 = 360;
@@ -13,6 +18,60 @@ trait D3DBase {
     fn draw(&mut self) -> Result<()>;
     fn present(&mut self) -> Result<()>;
     fn wait(&mut self) -> Result<()>;
+}
+
+fn catch_up_d3d_log(log_atomic: Arc::<AtomicUsize>) -> std::thread::JoinHandle::<()>
+{
+    // VSCode doesn't handle OutputDebugString() which is used by D3D debug layer
+    // so we manually read and print the strings
+
+    let sd = SECURITY_DESCRIPTOR{ ..Default::default() };
+    let sa = SECURITY_ATTRIBUTES{
+        nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+        lpSecurityDescriptor: &sd as *const _ as *mut _,
+        bInheritHandle: BOOL(1)
+    };
+    unsafe { InitializeSecurityDescriptor(PSECURITY_DESCRIPTOR(&sd as *const _ as *mut _), 1) };
+    unsafe { SetSecurityDescriptorDacl(PSECURITY_DESCRIPTOR(&sd as *const _ as *mut _), BOOL(1), std::ptr::null(), BOOL(0)) };
+
+    let db_ack = "DBWIN_BUFFER_READY\0".encode_utf16().collect::<Vec<u16>>();
+    let db_rdy = "DBWIN_DATA_READY\0".encode_utf16().collect::<Vec<u16>>();
+    let h_ack = unsafe { CreateEventW(&sa, BOOL(0), BOOL(0), PCWSTR(db_ack.as_ptr())) }.unwrap();
+    let h_rdy = unsafe { CreateEventW(&sa, BOOL(0), BOOL(0), PCWSTR(db_rdy.as_ptr())) }.unwrap();
+
+    let log_size = 8192u32;
+    let db = "DBWIN_BUFFER\0".encode_utf16().collect::<Vec<u16>>();
+    let fh = unsafe { CreateFileMappingW(INVALID_HANDLE_VALUE, &sa, PAGE_READWRITE, 0, log_size, PCWSTR(db.as_ptr())) }.unwrap();
+
+    let pid = unsafe { GetCurrentProcessId() };
+
+    let thread = std::thread::spawn(move || {
+        let mmf = unsafe { MapViewOfFile(&fh, FILE_MAP_READ, 0, 0, log_size as usize) };
+        loop {
+            unsafe { SetEvent(h_ack) };
+            let wait = unsafe { WaitForSingleObject(&h_rdy, 100) };
+
+            if log_atomic.load(std::sync::atomic::Ordering::Acquire) != 0 {
+                break;
+            }
+            if wait == WAIT_OBJECT_0 {
+                let log_pid = unsafe { *(mmf as *const c_uint) };
+                if pid == log_pid {
+                    let log_ptr = (mmf as isize + 4) as *const c_char;
+                    let log_msg = unsafe { std::ffi::CStr::from_ptr(log_ptr) };
+                    println!("MSG - {}", log_msg.to_str().unwrap());
+                }
+            }
+        }
+        unsafe {
+            UnmapViewOfFile(mmf);
+            CloseHandle(fh);
+            CloseHandle(h_ack);
+            CloseHandle(h_rdy);
+        }
+        println!("Log thread finished");
+    });
+    thread
 }
 
 const DEFAULT_RT_CLEAR_COLOR: [f32; 4] = [ 0.1, 0.2, 0.4, 1.0 ];
@@ -50,6 +109,7 @@ impl Drop for D3D {
 
 impl D3D {
     fn new(width: u32, height: u32, hwnd: HWND) -> Self {
+
         let factory_flags = if cfg!(debug_assertions) { DXGI_CREATE_FACTORY_DEBUG } else { 0 };
         let factory: IDXGIFactory2 = unsafe { CreateDXGIFactory2(factory_flags) }.unwrap();
 
@@ -57,15 +117,21 @@ impl D3D {
             let mut debug: Option<ID3D12Debug> = None;
             unsafe {
                 match D3D12GetDebugInterface(&mut debug) {
-                    Ok(_) => { debug.unwrap().EnableDebugLayer(); println!("Enable debug"); },
+                    Ok(_) => {
+                        debug.as_ref().unwrap().EnableDebugLayer();
+                        println!("Enable debug");
+                    },
                     _ => {},
                 }
             }
             let mut debug: Option<ID3D12Debug1> = None;
             unsafe {
                 match D3D12GetDebugInterface(&mut debug) {
-                    Ok(_) => { debug.unwrap().SetEnableGPUBasedValidation(BOOL(1));
-                                println!("Enable GPU based validation"); },
+                    Ok(_) => {
+                        debug.as_ref().unwrap().SetEnableGPUBasedValidation(BOOL(1));
+                        debug.as_ref().unwrap().SetEnableSynchronizedCommandQueueValidation(BOOL(1));
+                        println!("Enable GPU based validation");
+                    },
                     _ => {},
                 }
             }
@@ -266,23 +332,37 @@ fn setup_window(width: u32, height: u32) -> HWND {
 }
 
 fn main() -> Result<()> {
-    
-    let main_window_handle = setup_window(WINDOW_WIDTH, WINDOW_HEIGHT);
-    let mut d3d = D3D::new(WINDOW_WIDTH, WINDOW_HEIGHT, main_window_handle);
+
+    let dbg_atomic = Arc::new(AtomicUsize::new(0));
+    let mut dbg_thread: Option<std::thread::JoinHandle<()>> = None;
+    if cfg!(debug_assertions) {
+        dbg_thread = Some(catch_up_d3d_log(dbg_atomic.clone()));
+    }
 
     let mut msg = MSG::default();
-    loop {
-        if msg.message == WM_QUIT {
-            break;
+    {
+        let main_window_handle = setup_window(WINDOW_WIDTH, WINDOW_HEIGHT);
+        let mut d3d = D3D::new(WINDOW_WIDTH, WINDOW_HEIGHT, main_window_handle);
+        
+        loop {
+            if msg.message == WM_QUIT {
+                break;
+            }
+            if unsafe { PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE) }.into() {
+                unsafe { DispatchMessageW(&msg) };
+            }
+            else {
+                d3d.wait().unwrap();
+                d3d.draw().unwrap();
+                d3d.present().unwrap();
+            }
         }
-        if unsafe { PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE) }.into() {
-            unsafe { DispatchMessageW(&msg) };
-        }
-        else {
-            d3d.wait().unwrap();
-            d3d.draw().unwrap();
-            d3d.present().unwrap();
-        }
+    }
+
+    if let Some(x) = dbg_thread {
+        // Exit log thread
+        dbg_atomic.store(1, std::sync::atomic::Ordering::Release);
+        x.join().unwrap();
     }
 
     match msg.wParam.0 {
