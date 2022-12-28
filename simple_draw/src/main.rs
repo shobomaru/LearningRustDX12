@@ -32,24 +32,24 @@ fn catch_up_d3d_log(log_atomic: Arc::<AtomicUsize>) -> std::thread::JoinHandle::
         bInheritHandle: BOOL(1)
     };
     unsafe { InitializeSecurityDescriptor(PSECURITY_DESCRIPTOR(&sd as *const _ as *mut _), 1) };
-    unsafe { SetSecurityDescriptorDacl(PSECURITY_DESCRIPTOR(&sd as *const _ as *mut _), BOOL(1), std::ptr::null(), BOOL(0)) };
+    unsafe { SetSecurityDescriptorDacl(PSECURITY_DESCRIPTOR(&sd as *const _ as *mut _), BOOL(1), None, BOOL(0)) };
 
     let db_ack = "DBWIN_BUFFER_READY\0".encode_utf16().collect::<Vec<u16>>();
     let db_rdy = "DBWIN_DATA_READY\0".encode_utf16().collect::<Vec<u16>>();
-    let h_ack = unsafe { CreateEventW(&sa, BOOL(0), BOOL(0), PCWSTR(db_ack.as_ptr())) }.unwrap();
-    let h_rdy = unsafe { CreateEventW(&sa, BOOL(0), BOOL(0), PCWSTR(db_rdy.as_ptr())) }.unwrap();
+    let h_ack = unsafe { CreateEventW(Some(&sa), BOOL(0), BOOL(0), PCWSTR(db_ack.as_ptr())) }.unwrap();
+    let h_rdy = unsafe { CreateEventW(Some(&sa), BOOL(0), BOOL(0), PCWSTR(db_rdy.as_ptr())) }.unwrap();
 
     let log_size = 8192u32;
     let db = "DBWIN_BUFFER\0".encode_utf16().collect::<Vec<u16>>();
-    let fh = unsafe { CreateFileMappingW(INVALID_HANDLE_VALUE, &sa, PAGE_READWRITE, 0, log_size, PCWSTR(db.as_ptr())) }.unwrap();
+    let fh = unsafe { CreateFileMappingW(INVALID_HANDLE_VALUE, Some(&sa), PAGE_READWRITE, 0, log_size, PCWSTR(db.as_ptr())) }.unwrap();
 
     let pid = unsafe { GetCurrentProcessId() };
 
     let thread = std::thread::spawn(move || {
-        let mmf = unsafe { MapViewOfFile(&fh, FILE_MAP_READ, 0, 0, log_size as usize) };
+        let mmf = unsafe { MapViewOfFile(fh, FILE_MAP_READ, 0, 0, log_size as usize) };
         loop {
             unsafe { SetEvent(h_ack) };
-            let wait = unsafe { WaitForSingleObject(&h_rdy, 100) };
+            let wait = unsafe { WaitForSingleObject(h_rdy, 100) };
 
             if log_atomic.load(std::sync::atomic::Ordering::Acquire) != 0 {
                 break;
@@ -88,8 +88,9 @@ struct D3D {
     cmd_list: ID3D12GraphicsCommandList,
     frame_count: u64,
     fence: ID3D12Fence,
-    swap_chain_tex: [ID3D12Resource; BUFFER_COUNT as usize],
+    swap_chain_tex: Option<[ID3D12Resource; BUFFER_COUNT as usize]>,
     swap_chain_heap: ID3D12DescriptorHeap,
+    is_fullscreen: bool,
 }
 
 impl Drop for D3D {
@@ -166,7 +167,7 @@ impl D3D {
                 },
                 ..Default::default()
             };
-            factory.CreateSwapChainForHwnd(&cmd_queue, hwnd, &desc, std::ptr::null(), None)
+            factory.CreateSwapChainForHwnd(&cmd_queue, hwnd, &desc, None, None)
         }.unwrap().cast().unwrap();
         
         let cmd_list: ID3D12GraphicsCommandList = unsafe {
@@ -194,7 +195,7 @@ impl D3D {
             let desc = D3D12_CPU_DESCRIPTOR_HANDLE{
                 ptr: h_rtv.ptr + i.0 * rtv_stride
             };
-            unsafe { device.CreateRenderTargetView(i.1, std::ptr::null(), &desc) };
+            unsafe { device.CreateRenderTargetView(i.1, None, desc) };
         }
 
         D3D{
@@ -207,8 +208,9 @@ impl D3D {
             cmd_list,
             frame_count: 0,
             fence,
-            swap_chain_tex,
+            swap_chain_tex: Some(swap_chain_tex),
             swap_chain_heap,
+            is_fullscreen: false,
         }
     }
 }
@@ -221,13 +223,16 @@ impl D3DBase for D3D {
         let cmd_alloc = &self.cmd_alloc[self.frame_count as usize % 3];
         unsafe { cmd_alloc.Reset() }.unwrap();
         unsafe { self.cmd_list.Reset(cmd_alloc, None) }.unwrap();
-
+        
+        let swap_chain_tex = &((self.swap_chain_tex.as_ref().unwrap())[frame_index as usize]);
+        let swap_chain_copy = swap_chain_tex.clone();
         let before_swapchain_barrier = D3D12_RESOURCE_BARRIER {
             Type: D3D12_RESOURCE_BARRIER_TYPE_TRANSITION,
             Flags: D3D12_RESOURCE_BARRIER_FLAG_NONE,
             Anonymous: D3D12_RESOURCE_BARRIER_0 {
                 Transition: std::mem::ManuallyDrop::new(D3D12_RESOURCE_TRANSITION_BARRIER {
-                    pResource: Some(self.swap_chain_tex[frame_index as usize].clone()),
+                    // I don't know why pResource reqires non-referenced type. This will make a resource leak :(
+                    pResource: Some(unsafe { std::mem::transmute_copy(&swap_chain_copy) }),
                     StateBefore: D3D12_RESOURCE_STATE_COMMON,
                     StateAfter: D3D12_RESOURCE_STATE_RENDER_TARGET,
                     Subresource: D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,
@@ -247,7 +252,7 @@ impl D3DBase for D3D {
             Flags: D3D12_RESOURCE_BARRIER_FLAG_NONE,
             Anonymous: D3D12_RESOURCE_BARRIER_0 {
                 Transition: std::mem::ManuallyDrop::new(D3D12_RESOURCE_TRANSITION_BARRIER {
-                    pResource: Some(self.swap_chain_tex[frame_index as usize].clone()),
+                    pResource: Some(unsafe { std::mem::transmute_copy(&swap_chain_copy) }),
                     StateBefore: D3D12_RESOURCE_STATE_RENDER_TARGET,
                     StateAfter: D3D12_RESOURCE_STATE_COMMON,
                     Subresource: D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,
@@ -265,13 +270,41 @@ impl D3DBase for D3D {
 
     fn present(&mut self) -> Result<()> {
         let param: DXGI_PRESENT_PARAMETERS = Default::default();
-        unsafe { self.swap_chain.Present1(1, 0, &param) }?;
+        unsafe { self.swap_chain.Present1(1, 0, &param) }.unwrap();
         Ok(())
     }
 
     fn wait(&mut self) -> Result<()> {
         if self.frame_count != 0 {
             unsafe { self.fence.SetEventOnCompletion(self.frame_count, None) }?;
+        }
+        let mut new_fullscreen = BOOL(0);
+        unsafe { self.swap_chain.GetFullscreenState(Some(&mut new_fullscreen), None) }?;
+        if new_fullscreen != self.is_fullscreen {
+            println!("Window state changed. fullscreen={:?}", new_fullscreen);
+            self.frame_count += 1;
+            unsafe { self.cmd_queue.Signal(&self.fence, self.frame_count) }?;
+            unsafe { self.fence.SetEventOnCompletion(self.frame_count, None) }?;
+            self.swap_chain_tex = None;
+
+            unsafe { self.swap_chain.ResizeBuffers(
+                BUFFER_COUNT, WINDOW_WIDTH, WINDOW_HEIGHT, DXGI_FORMAT_R8G8B8A8_UNORM, 0)
+            }?;
+            let swap_chain_tex: [_; BUFFER_COUNT as usize] =
+                array_init::try_array_init(|i| -> Result<ID3D12Resource> {
+                    let r = unsafe { self.swap_chain.GetBuffer(i as u32) }?;
+                    Ok(r)
+                }).unwrap();
+            let h_rtv = unsafe { self.swap_chain_heap.GetCPUDescriptorHandleForHeapStart() };
+            for i in swap_chain_tex.iter().enumerate() {
+                let desc = D3D12_CPU_DESCRIPTOR_HANDLE{
+                    ptr: h_rtv.ptr + i.0 * self.rtv_stride
+                };
+                unsafe { self.device.CreateRenderTargetView(i.1, None, desc) };
+            }
+            self.swap_chain_tex = Some(swap_chain_tex);
+            
+            self.is_fullscreen = new_fullscreen.into();
         }
         Ok(())
     }
@@ -317,7 +350,7 @@ fn setup_window(width: u32, height: u32) -> HWND {
         PCWSTR(class_name.as_ptr()),
         PCWSTR("Window\0".encode_utf16().collect::<Vec<u16>>().as_ptr()),
         WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, 0, window_width, window_height,
-        None, None, None, std::ptr::null()
+        None, None, None, None
     ) };
     assert_ne!(hwnd.0, 0);
 
@@ -334,10 +367,14 @@ fn main() -> Result<()> {
         dbg_thread = Some(catch_up_d3d_log(dbg_atomic.clone()));
     }
 
+    let mut debug_device: Option<ID3D12DebugDevice> = None;
     let mut msg = MSG::default();
     {
         let main_window_handle = setup_window(WINDOW_WIDTH, WINDOW_HEIGHT);
         let mut d3d = D3D::new(WINDOW_WIDTH, WINDOW_HEIGHT, main_window_handle);
+        if cfg!(debug_assertions) {
+            debug_device = d3d.device.cast::<ID3D12DebugDevice>().ok();
+        }
         
         loop {
             if msg.message == WM_QUIT {
@@ -351,6 +388,12 @@ fn main() -> Result<()> {
                 d3d.draw();
                 d3d.present().unwrap();
             }
+        }
+    }
+    unsafe {
+        if let Some(d) = debug_device {
+            // Expect that only a ID3D12Device leaks
+            d.ReportLiveDeviceObjects(D3D12_RLDO_IGNORE_INTERNAL).unwrap();
         }
     }
 
