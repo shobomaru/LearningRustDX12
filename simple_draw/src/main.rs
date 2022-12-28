@@ -1,5 +1,5 @@
 use windows::{
-    core::*, Win32::Foundation::*, Win32::Graphics::Direct3D::Fxc::*, Win32::Graphics::Direct3D::*,
+    core::*, Win32::Foundation::*, Win32::Graphics::Direct3D::Dxc::*, Win32::Graphics::Direct3D::*,
     Win32::Graphics::Direct3D12::*, Win32::Graphics::Dxgi::Common::*, Win32::Graphics::Dxgi::*,
     Win32::System::LibraryLoader::*, Win32::System::Threading::*,
     Win32::UI::WindowsAndMessaging::*,
@@ -15,7 +15,7 @@ const WINDOW_HEIGHT: u32 = 360;
 const BUFFER_COUNT: u32 = 3;
 
 trait D3DBase {
-    fn draw(&mut self) -> Result<()>;
+    fn draw(&mut self);
     fn present(&mut self) -> Result<()>;
     fn wait(&mut self) -> Result<()>;
 }
@@ -95,14 +95,11 @@ struct D3D {
 impl Drop for D3D {
     fn drop(&mut self) {
         self.frame_count += 1;
-        // Wait until GPU command completion
+        // Wait for GPU command completion
         unsafe {
             self.cmd_queue.Signal(&self.fence, self.frame_count).unwrap();
-            loop {
-                if self.fence.GetCompletedValue() >= self.frame_count {
-                    break;
-                }
-            }
+            self.fence.SetEventOnCompletion(self.frame_count, None).unwrap();
+            self.device.GetDeviceRemovedReason().unwrap();
         }
     }
 }
@@ -121,7 +118,7 @@ impl D3D {
                         debug.as_ref().unwrap().EnableDebugLayer();
                         println!("Enable debug");
                     },
-                    _ => {},
+                    _ => { println!("Cannot enable debug layer. Maybe developer mode is disabled.") },
                 }
             }
             let mut debug: Option<ID3D12Debug1> = None;
@@ -217,13 +214,13 @@ impl D3D {
 }
 
 impl D3DBase for D3D {
-    fn draw(&mut self) -> Result<()> {
+    fn draw(&mut self) {
         self.frame_count += 1;
         let frame_index = unsafe { self.swap_chain.GetCurrentBackBufferIndex() };
 
         let cmd_alloc = &self.cmd_alloc[self.frame_count as usize % 3];
-        unsafe { cmd_alloc.Reset() }?;
-        unsafe { self.cmd_list.Reset(cmd_alloc, None) }?;
+        unsafe { cmd_alloc.Reset() }.unwrap();
+        unsafe { self.cmd_list.Reset(cmd_alloc, None) }.unwrap();
 
         let before_swapchain_barrier = D3D12_RESOURCE_BARRIER {
             Type: D3D12_RESOURCE_BARRIER_TYPE_TRANSITION,
@@ -259,13 +256,11 @@ impl D3DBase for D3D {
         };
         unsafe { self.cmd_list.ResourceBarrier(&[after_swapchain_barrier]) };
 
-        unsafe { self.cmd_list.Close() }?;
+        unsafe { self.cmd_list.Close() }.unwrap();
 
         let cmds = [Some(ID3D12CommandList::from(&self.cmd_list))];
         unsafe { self.cmd_queue.ExecuteCommandLists(&cmds) };
-        unsafe { self.cmd_queue.Signal(&self.fence, self.frame_count) }?;
-
-        Ok(())
+        unsafe { self.cmd_queue.Signal(&self.fence, self.frame_count) }.unwrap();
     }
 
     fn present(&mut self) -> Result<()> {
@@ -353,7 +348,7 @@ fn main() -> Result<()> {
             }
             else {
                 d3d.wait().unwrap();
-                d3d.draw().unwrap();
+                d3d.draw();
                 d3d.present().unwrap();
             }
         }
