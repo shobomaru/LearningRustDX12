@@ -1,11 +1,8 @@
 use windows::{
-    core::*, Win32::Foundation::*, Win32::Graphics::Direct3D::Fxc::*, Win32::Graphics::Direct3D::*,
-    Win32::Graphics::Direct3D12::*, Win32::Graphics::Dxgi::Common::*, Win32::Graphics::{Dxgi::*, Gdi::*},
-    Win32::System::LibraryLoader::*, Win32::System::Threading::*,
-    Win32::System::WindowsProgramming::*, Win32::UI::WindowsAndMessaging::*,
+    core::*, Win32::Foundation::*,
+    Win32::System::LibraryLoader::*,
+    Win32::UI::WindowsAndMessaging::*,
 };
-
-use std::mem::transmute;
 
 static WINDOW_WIDTH: u32 = 640;
 static WINDOW_HEIGHT: u32 = 360;
@@ -48,7 +45,7 @@ fn setup_window(width: u32, height: u32) -> HWND {
         PCWSTR("WindowClass\0".encode_utf16().collect::<Vec<u16>>().as_ptr()),
         PCWSTR("Window\0".encode_utf16().collect::<Vec<u16>>().as_ptr()),
         WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, 0, window_width, window_height,
-        None, None, None, std::ptr::null()
+        None, None, None, None
     ) };
     assert_ne!(hwnd.0, 0);
 
