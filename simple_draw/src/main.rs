@@ -6,7 +6,7 @@ use windows::{
     Win32::Security::*, Win32::System::Memory::*,
 };
 use std::sync::{Arc, atomic::AtomicUsize};
-use libc::{c_uint, c_char};
+use libc::{c_uint, c_char, c_void};
 
 extern crate libc;
 
@@ -78,7 +78,7 @@ const DEFAULT_RT_CLEAR_COLOR: [f32; 4] = [ 0.1, 0.2, 0.4, 1.0 ];
 
 struct D3D {
     #[allow(dead_code)]
-    dxgi_factory: IDXGIFactory2,
+    dxgi_factory: IDXGIFactory5,
     #[allow(dead_code)]
     device: ID3D12Device,
     rtv_stride: usize,
@@ -115,7 +115,7 @@ impl D3D {
     fn new(width: u32, height: u32, hwnd: HWND) -> Self {
 
         let factory_flags = if cfg!(debug_assertions) { DXGI_CREATE_FACTORY_DEBUG } else { 0 };
-        let factory: IDXGIFactory2 = unsafe { CreateDXGIFactory2(factory_flags) }.unwrap();
+        let factory: IDXGIFactory5 = unsafe { CreateDXGIFactory2(factory_flags) }.unwrap();
 
         if cfg!(debug_assertions) {
             let mut debug: Option<ID3D12Debug> = None;
@@ -136,10 +136,16 @@ impl D3D {
                         debug.as_ref().unwrap().SetEnableSynchronizedCommandQueueValidation(BOOL(1));
                         println!("Enable GPU based validation");
                     },
-                    _ => {},
+                    _ => { println!("Cannot get ID3D12Debug1 interface.") },
                 }
             }
         }
+
+        let mut allow_tearing = BOOL(0);
+        if let Ok(_) = unsafe { factory.CheckFeatureSupport(DXGI_FEATURE_PRESENT_ALLOW_TEARING, std::ptr::addr_of_mut!(allow_tearing) as *mut _, 4) } {
+            println!("VRR support : {:?}", allow_tearing);
+        }
+
         let device: ID3D12Device = {
             let mut device_ptr: Option<ID3D12Device> = None;
             unsafe { D3D12CreateDevice(None, D3D_FEATURE_LEVEL_12_0, &mut device_ptr) }.unwrap();
