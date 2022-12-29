@@ -102,6 +102,12 @@ impl Drop for D3D {
             self.fence.SetEventOnCompletion(self.frame_count, None).unwrap();
             self.device.GetDeviceRemovedReason().unwrap();
         }
+        // Release fullscreen state
+        let mut is_fullscreen = BOOL(0);
+        unsafe { self.swap_chain.GetFullscreenState(Some(&mut is_fullscreen), None) }.unwrap();
+        if is_fullscreen.into() {
+            unsafe { self.swap_chain.SetFullscreenState(BOOL(0), None) }.unwrap();
+        }
     }
 }
 
@@ -276,8 +282,9 @@ impl D3DBase for D3D {
 
     fn wait(&mut self) -> Result<()> {
         if self.frame_count != 0 {
-            unsafe { self.fence.SetEventOnCompletion(self.frame_count, None) }?;
+            unsafe { self.fence.SetEventOnCompletion(self.frame_count - 1, None) }?;
         }
+        // Handling fullscreen state
         let mut new_fullscreen = BOOL(0);
         unsafe { self.swap_chain.GetFullscreenState(Some(&mut new_fullscreen), None) }?;
         if new_fullscreen != self.is_fullscreen {
@@ -287,8 +294,9 @@ impl D3DBase for D3D {
             unsafe { self.fence.SetEventOnCompletion(self.frame_count, None) }?;
             self.swap_chain_tex = None;
 
+            let desc = unsafe { self.swap_chain.GetDesc1() }?;
             unsafe { self.swap_chain.ResizeBuffers(
-                BUFFER_COUNT, WINDOW_WIDTH, WINDOW_HEIGHT, DXGI_FORMAT_R8G8B8A8_UNORM, 0)
+                desc.BufferCount, desc.Width, desc.Height, desc.Format, 0)
             }?;
             let swap_chain_tex: [_; BUFFER_COUNT as usize] =
                 array_init::try_array_init(|i| -> Result<ID3D12Resource> {
