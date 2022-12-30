@@ -145,6 +145,14 @@ mod tests {
                 for x in 0..res_desc.Width as isize {
                     let pt = (p as isize + y * row_pitch as isize + x * 4) as *const c_uint;
                     let s: [u8; 4] = unsafe { *pt }.to_le_bytes();
+
+                    // In this sample, all pixel's color should be [25, 51, 102, 255]
+                    assert_eq!(unsafe{ *pt }, 4284887833);
+                    assert_eq!(s[0], 25);
+                    assert_eq!(s[1], 51);
+                    assert_eq!(s[2], 102);
+                    assert_eq!(s[3], 255);
+
                     sha1.input(&s);
                 }
             }
