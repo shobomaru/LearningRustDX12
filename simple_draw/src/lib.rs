@@ -8,7 +8,7 @@ mod tests {
 
     use windows::{
         Win32::Graphics::Direct3D12::*, Win32::UI::WindowsAndMessaging::*,
-        Win32::Graphics::Dxgi::*, Win32::Graphics::Dxgi::Common::*,
+        Win32::Graphics::Dxgi::Common::*,
     };
     use std::sync::{Arc, atomic::AtomicUsize};
     use libc::*;
@@ -17,7 +17,7 @@ mod tests {
 
     #[test]
     fn test_image() {
-        let expected_sha1 = "abd59b03df0419f16d40411d7ef716d990892d38";
+        let expected_sha1 = "621bd86b3a40ca153889f46736f7074d623320f3";
         let mut rendered_sha1 = String::new();
 
         let dbg_atomic = Arc::new(AtomicUsize::new(0));
@@ -29,15 +29,7 @@ mod tests {
         let mut msg = MSG::default();
         {
             let main_window_handle = setup_window(WINDOW_WIDTH, WINDOW_HEIGHT);
-            let mut d3d = D3D::new(WINDOW_WIDTH, WINDOW_HEIGHT, main_window_handle);
-            {
-                // print device name
-                let luid = unsafe { d3d.device.GetAdapterLuid() };
-                let adapter: IDXGIAdapter4 = unsafe { d3d.dxgi_factory.EnumAdapterByLuid(luid) }.unwrap();
-                let desc = unsafe { adapter.GetDesc3() }.unwrap();
-                println!("Adapter info:\n{:?}", desc);
-                println!("Adapter name: {:?}", String::from_utf16_lossy(&desc.Description).as_str());
-            }
+            let mut d3d = D3D::new(WINDOW_WIDTH, WINDOW_HEIGHT, main_window_handle, true);
             
             loop {
                 if msg.message == WM_QUIT {
@@ -154,12 +146,11 @@ mod tests {
                     let pt = (p as isize + y * row_pitch as isize + x * 4) as *const c_uint;
                     let s: [u8; 4] = unsafe { *pt }.to_le_bytes();
 
-                    // In this sample, all pixel's color should be [25, 51, 102, 255]
-                    assert_eq!(s[0], 25);
+                    // In this sample, all pixel's color should be [26, 51, 102, 255]
+                    assert_eq!(s[0], 26); // Intel GPU returns 25
                     assert_eq!(s[1], 51);
                     assert_eq!(s[2], 102);
                     assert_eq!(s[3], 255);
-                    assert_eq!(unsafe{ *pt }, 4284887833);
 
                     sha1.input(&s);
                 }

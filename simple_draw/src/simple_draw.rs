@@ -118,7 +118,7 @@ impl Drop for D3D {
 }
 
 impl D3D {
-    pub fn new(width: u32, height: u32, hwnd: HWND) -> Self {
+    pub fn new(width: u32, height: u32, hwnd: HWND, is_sw: bool) -> Self {
 
         let factory_flags = if cfg!(debug_assertions) { DXGI_CREATE_FACTORY_DEBUG } else { 0 };
         let factory: IDXGIFactory5 = unsafe { CreateDXGIFactory2(factory_flags) }.unwrap();
@@ -152,9 +152,21 @@ impl D3D {
             println!("VRR support : {:?}", allow_tearing);
         }
 
+        let adapter: IDXGIAdapter4 = {
+            let mut adapter: Option<IDXGIAdapter4> = None;
+            if is_sw {
+                adapter = unsafe { factory.EnumWarpAdapter() }.ok();
+            }
+            if adapter.is_none() {
+                adapter = unsafe { factory.EnumAdapters1(0).and_then(|a| a.cast::<IDXGIAdapter4>()) }.ok();
+            }
+            adapter.unwrap()
+        };
+        let adapter_desc = unsafe { adapter.GetDesc3() }.unwrap();
+        println!("Adapter name: {}", String::from_utf16_lossy(adapter_desc.Description.split(|n| n == &0).next().unwrap()).to_string());
         let device: ID3D12Device = {
             let mut device_ptr: Option<ID3D12Device> = None;
-            unsafe { D3D12CreateDevice(None, D3D_FEATURE_LEVEL_12_0, &mut device_ptr) }.unwrap();
+            unsafe { D3D12CreateDevice(&adapter, D3D_FEATURE_LEVEL_12_0, &mut device_ptr) }.unwrap();
             device_ptr.unwrap()
         };
         let rtv_stride = unsafe { device.GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV) } as usize;
@@ -398,7 +410,7 @@ pub fn default_main(width: u32, height: u32) -> Result<()> {
     let mut msg = MSG::default();
     {
         let main_window_handle = setup_window(width, height);
-        let mut d3d = D3D::new(width, height, main_window_handle);
+        let mut d3d = D3D::new(width, height, main_window_handle, false);
         if cfg!(debug_assertions) {
             debug_device = d3d.device.cast::<ID3D12DebugDevice>().ok();
         }
