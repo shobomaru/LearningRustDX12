@@ -2,6 +2,7 @@
 name = "simple_draw"
 version = "0.1.0"
 edition = "2021"
+authors = ["shobomaru"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -9,6 +10,9 @@ edition = "2021"
 array-init = "2.1.0"
 directx_math = "0.2.2"
 libc = "*"
+
+[dev-dependencies]
+rust-crypto = "0.2.36"
 
 [dependencies.windows]
 version = "0.43.0"
