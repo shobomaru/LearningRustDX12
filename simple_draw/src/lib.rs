@@ -8,7 +8,7 @@ mod tests {
 
     use windows::{
         Win32::Graphics::Direct3D12::*, Win32::UI::WindowsAndMessaging::*,
-        Win32::Graphics::Dxgi::Common::*,
+        Win32::Graphics::Dxgi::*, Win32::Graphics::Dxgi::Common::*,
     };
     use std::sync::{Arc, atomic::AtomicUsize};
     use libc::*;
@@ -30,6 +30,14 @@ mod tests {
         {
             let main_window_handle = setup_window(WINDOW_WIDTH, WINDOW_HEIGHT);
             let mut d3d = D3D::new(WINDOW_WIDTH, WINDOW_HEIGHT, main_window_handle);
+            {
+                // print device name
+                let luid = unsafe { d3d.device.GetAdapterLuid() };
+                let adapter: IDXGIAdapter4 = unsafe { d3d.dxgi_factory.EnumAdapterByLuid(luid) }.unwrap();
+                let desc = unsafe { adapter.GetDesc3() }.unwrap();
+                println!("Adapter info:\n{:?}", desc);
+                println!("Adapter name: {:?}", String::from_utf16_lossy(&desc.Description).as_str());
+            }
             
             loop {
                 if msg.message == WM_QUIT {
@@ -147,11 +155,11 @@ mod tests {
                     let s: [u8; 4] = unsafe { *pt }.to_le_bytes();
 
                     // In this sample, all pixel's color should be [25, 51, 102, 255]
-                    assert_eq!(unsafe{ *pt }, 4284887833);
                     assert_eq!(s[0], 25);
                     assert_eq!(s[1], 51);
                     assert_eq!(s[2], 102);
                     assert_eq!(s[3], 255);
+                    assert_eq!(unsafe{ *pt }, 4284887833);
 
                     sha1.input(&s);
                 }
