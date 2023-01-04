@@ -84,6 +84,7 @@ pub fn catch_up_d3d_log(log_atomic: Arc::<AtomicUsize>) -> std::thread::JoinHand
 }
 
 const DEFAULT_RT_CLEAR_COLOR: [f32; 4] = [ 0.1, 0.2, 0.4, 1.0 ];
+const DEFAULT_DEPTH_CLEAR: f32 = 0.0; // Reversed depth
 
 pub struct D3D {
     pub dxgi_factory: IDXGIFactory5,
@@ -129,10 +130,24 @@ struct Resource {
     ib_view: D3D12_INDEX_BUFFER_VIEW,
     ib_count: u32,
     cb: [ID3D12Resource; BUFFER_COUNT as usize],
+    #[allow(dead_code)]
+    z_tex: ID3D12Resource,
+    dsv_heap: ID3D12DescriptorHeap,
 }
 
-const SPHERE_STACKS: u32 = 8;
-const SPHERE_SLICES: u32 = 8;
+fn create_scene() -> Scene {
+    Scene {
+        camera_pos: XMVectorSet(0.0, 4.0, -4.0, 0.0),
+        camera_target: XMVectorSet(0.0, 0.0, 0.0, 0.0),
+        camera_up: XMVectorSet(0.0, 1.0, 0.0, 0.0),
+        camera_fov: XMConvertToRadians(45.0),
+        camera_near: 0.01,
+        camera_far: 100.0,
+    }
+}
+
+const SPHERE_STACKS: u32 = 10;
+const SPHERE_SLICES: u32 = 12;
 
 fn create_resources(device: &ID3D12Device, width: u32, height: u32) -> Resource {
     // Create a root signature
@@ -264,8 +279,9 @@ float4 main(Input input) : SV_Target {
         rs_desc.FillMode = D3D12_FILL_MODE_SOLID;
         rs_desc.DepthClipEnable = BOOL(1);
         let mut ds_desc: D3D12_DEPTH_STENCIL_DESC = unsafe { std::mem::zeroed() };
-        //ds_desc.DepthEnable = BOOL(1);
-        //ds_desc.DepthFunc = D3D12_COMPARISON_FUNC_GREATER_EQUAL;
+        ds_desc.DepthEnable = BOOL(1);
+        ds_desc.DepthFunc = D3D12_COMPARISON_FUNC_GREATER_EQUAL;
+        ds_desc.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
         let mut bs_desc: D3D12_BLEND_DESC = unsafe { std::mem::zeroed() };
         bs_desc.RenderTarget[0].RenderTargetWriteMask = 0b1111;
 
@@ -330,7 +346,6 @@ float4 main(Input input) : SV_Target {
         for x in 0..SPHERE_SLICES {
             let b: u16 = (y * (SPHERE_SLICES + 1) + x).try_into().unwrap();
             let s: u16 = (SPHERE_SLICES + 1).try_into().unwrap();
-            //indices.push(quad_index_list([b, b + s, b + 1, b + s, b + s + 1, b + 1]));
             indices.push(quad_index_list([b, b + 1, b + s, b + 1, b + s + 1, b + s]));
         }
     }
@@ -389,9 +404,45 @@ float4 main(Input input) : SV_Target {
     unsafe { libc::memcpy((p as usize + vb_size) as *mut c_void, indices.as_ptr() as _, ib_size) };
     unsafe { vb_ib.Unmap(0, None) };
 
-    unsafe { SetDllDirectoryW(PCWSTR(&0u16)) };
+    let z_tex: ID3D12Resource = {
+        let mut desc: D3D12_RESOURCE_DESC = unsafe { std::mem::zeroed() };
+        desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+        desc.Format = DXGI_FORMAT_D32_FLOAT;
+        desc.Width = width.try_into().unwrap();
+        desc.Height = height.try_into().unwrap();
+        desc.DepthOrArraySize = 1;
+        desc.MipLevels = 1;
+        desc.SampleDesc.Count = 1;
+        desc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+        desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
+        let mut heap: D3D12_HEAP_PROPERTIES = unsafe { std::mem::zeroed() };
+        heap.Type = D3D12_HEAP_TYPE_DEFAULT;
+        let mut res: Option<ID3D12Resource> = None;
+        let cval = D3D12_CLEAR_VALUE {
+            Format: desc.Format,
+            Anonymous: D3D12_CLEAR_VALUE_0 {
+                DepthStencil: D3D12_DEPTH_STENCIL_VALUE{ Depth: DEFAULT_DEPTH_CLEAR, Stencil: 0 }
+            }
+        };
+        unsafe { device.CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_DEPTH_WRITE, Some(&cval), &mut res) }.unwrap();
+        res.unwrap()
+    };
+    let dsv_heap: ID3D12DescriptorHeap = {
+        let desc = D3D12_DESCRIPTOR_HEAP_DESC {
+            Type: D3D12_DESCRIPTOR_HEAP_TYPE_DSV,
+            NumDescriptors: 10,
+            Flags: D3D12_DESCRIPTOR_HEAP_FLAG_NONE,
+            NodeMask: 0,
+        };
+        unsafe { device.CreateDescriptorHeap(&desc) }.unwrap()
+    };
+    {
+        let h = unsafe { dsv_heap.GetCPUDescriptorHandleForHeapStart() };
+        unsafe { device.CreateDepthStencilView(&z_tex, None, h) };
+    }
 
-    Resource { width, height, rootsig, pso, vb_ib, vb_view, ib_view, ib_count, cb }
+    unsafe { SetDllDirectoryW(PCWSTR(&0u16)) };
+    Resource { width, height, rootsig, pso, vb_ib, vb_view, ib_view, ib_count, cb, z_tex, dsv_heap }
 }
 
 impl Drop for D3D {
@@ -542,7 +593,7 @@ impl D3D {
             swap_chain_tex: Some(swap_chain_tex),
             swap_chain_heap,
             is_fullscreen: false,
-            scene: unsafe { std::mem::zeroed() },
+            scene: create_scene(),
             resource,
         }
     }
@@ -556,16 +607,26 @@ impl D3DBase for D3D {
             ptr: unsafe { self.swap_chain_heap.GetCPUDescriptorHandleForHeapStart() }.ptr
                 + frame_index as usize * self.rtv_stride,
         };
+        let scene_dsv = D3D12_CPU_DESCRIPTOR_HANDLE {
+            ptr: unsafe { self.resource.dsv_heap.GetCPUDescriptorHandleForHeapStart() }.ptr
+        };
 
         let cb_scene = &self.resource.cb[self.frame_count as usize % 3];
         let mut p_cb_scene: *mut c_void = std::ptr::null_mut();
         unsafe { cb_scene.Map(0, None, Some(&mut p_cb_scene)) }.unwrap();
 
+        #[repr(C)]
         struct CBScene {
             view_proj: XMMATRIX,
         }
-        let scene_data = CBScene {
-            view_proj: XMMatrixIdentity(),
+        let scene_data: CBScene = {
+            let view = XMMatrixLookAtLH(self.scene.camera_pos, self.scene.camera_target, self.scene.camera_up);
+            let aspect = self.resource.width as f32 / self.resource.height as f32;
+            let proj = XMMatrixPerspectiveFovLH(self.scene.camera_fov, aspect, self.scene.camera_far, self.scene.camera_near);
+            let vp = XMMatrixMultiply(view, &proj);
+            CBScene {
+                view_proj: XMMatrixTranspose(vp),
+            }
         };
         unsafe { libc::memcpy(p_cb_scene, &scene_data as *const CBScene as _, std::mem::size_of::<CBScene>()) };
 
@@ -590,6 +651,9 @@ impl D3DBase for D3D {
         };
         unsafe { self.cmd_list.ResourceBarrier(&[before_swapchain_barrier]) };
 
+        let h_dsv = unsafe { self.resource.dsv_heap.GetCPUDescriptorHandleForHeapStart() };
+        unsafe { self.cmd_list.ClearDepthStencilView(h_dsv, D3D12_CLEAR_FLAG_DEPTH, DEFAULT_DEPTH_CLEAR, 0, &[]) };
+
         let h_rtv = unsafe { self.swap_chain_heap.GetCPUDescriptorHandleForHeapStart() };
         let rtv_swapchain = D3D12_CPU_DESCRIPTOR_HANDLE{
             ptr: h_rtv.ptr + frame_index as usize % 3 * self.rtv_stride as usize
@@ -610,7 +674,7 @@ impl D3DBase for D3D {
             Width: self.resource.width as f32, Height: self.resource.height as f32, MaxDepth: 1.0f32, ..Default::default()
         };
         unsafe { self.cmd_list.RSSetViewports(&[viewport]) };
-        unsafe { self.cmd_list.OMSetRenderTargets(1, Some(&swap_chain_rtv), BOOL(0), None) };
+        unsafe { self.cmd_list.OMSetRenderTargets(1, Some(&swap_chain_rtv), BOOL(0), Some(&scene_dsv)) };
         unsafe { self.cmd_list.DrawIndexedInstanced(self.resource.ib_count, 1, 0, 0, 0) };
 
         let after_swapchain_barrier = D3D12_RESOURCE_BARRIER {
