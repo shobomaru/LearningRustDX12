@@ -161,6 +161,12 @@ fn create_resources(device: &ID3D12Device, width: u32, height: u32) -> Resource 
         unsafe { device.CreateRootSignature(0, &*ary) }.unwrap()
     };
 
+    // DLL load path for dxil.dll
+    {
+        let path = "../dll\0".encode_utf16().collect::<Vec<u16>>();
+        unsafe { SetDllDirectoryW(PCWSTR(path.as_ptr())) };
+    }
+
     // Craete a PSO
     let pso: ID3D12PipelineState;
     {
@@ -382,6 +388,8 @@ float4 main(Input input) : SV_Target {
     unsafe { libc::memcpy(p, vertices.as_ptr() as _, vb_size) };
     unsafe { libc::memcpy((p as usize + vb_size) as *mut c_void, indices.as_ptr() as _, ib_size) };
     unsafe { vb_ib.Unmap(0, None) };
+
+    unsafe { SetDllDirectoryW(PCWSTR(&0u16)) };
 
     Resource { width, height, rootsig, pso, vb_ib, vb_view, ib_view, ib_count, cb }
 }
