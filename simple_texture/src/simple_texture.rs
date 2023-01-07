@@ -559,7 +559,7 @@ float4 main(Input input) : SV_Target {
                         d += high.data[ps as usize * 4 + 1 * 4 * c] as u32;
                         d += high.data[ps as usize * 4 + high.extent[0] as usize * 4 + c] as u32;
                         d += high.data[ps as usize * 4 + high.extent[0] as usize * 4 + 1 * 4 + c] as u32;
-                        data[pd as usize * 4 + c] = ((d + 4) / 2).min(u8::MAX as _).try_into().unwrap();
+                        data[pd as usize * 4 + c] = ((d + 2) / 4).try_into().unwrap();
                     }
                 }
             }
