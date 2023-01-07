@@ -31,3 +31,6 @@ jobs:
     - name: Run tests (simple_triangle)
       run: cargo test --verbose
       working-directory: ./simple_triangle
+    - name: Build (simple_texture)
+      run: cargo build --verbose
+      working-directory: ./simple_texture
