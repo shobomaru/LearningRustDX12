@@ -123,7 +123,6 @@ struct Scene {
 }
 
 struct Resource {
-    #[allow(dead_code)]
     copy_fence: ID3D12Fence,
     width: u32,
     height: u32,
@@ -135,6 +134,7 @@ struct Resource {
     ib_view: D3D12_INDEX_BUFFER_VIEW,
     ib_count: u32,
     cb: [ID3D12Resource; BUFFER_COUNT as usize],
+    #[allow(dead_code)]
     tex_sailboat: ID3D12Resource,
     #[allow(dead_code)]
     z_tex: ID3D12Resource,
@@ -403,7 +403,7 @@ float4 main(Input input) : SV_Target {
         for x in 0..SPHERE_SLICES {
             let b: u16 = (y * (SPHERE_SLICES + 1) + x).try_into().unwrap();
             let s: u16 = (SPHERE_SLICES + 1).try_into().unwrap();
-            indices.push(quad_index_list([b, b + 1, b + s, b + 1, b + s + 1, b + s]));
+            indices.push(quad_index_list([b, b + s, b + 1, b + s, b + s + 1, b + 1]));
         }
     }
     let vb_size = std::mem::size_of::<vertex_element>() * vertices.len();
