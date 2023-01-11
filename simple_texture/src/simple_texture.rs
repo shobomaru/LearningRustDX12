@@ -8,6 +8,7 @@ use windows::{
 use std::sync::{Arc, atomic::AtomicUsize};
 use std::ffi::CString;
 use libc::{c_uint, c_char, c_void};
+use widestring::*;
 use directx_math::*;
 use std::f32::consts::PI;
 
@@ -46,13 +47,11 @@ pub fn catch_up_d3d_log(log_atomic: Arc::<AtomicUsize>) -> std::thread::JoinHand
     unsafe { InitializeSecurityDescriptor(PSECURITY_DESCRIPTOR(&sd as *const _ as *mut _), 1) };
     unsafe { SetSecurityDescriptorDacl(PSECURITY_DESCRIPTOR(&sd as *const _ as *mut _), BOOL(1), None, BOOL(0)) };
 
-    let db_ack = "DBWIN_BUFFER_READY\0".encode_utf16().collect::<Vec<u16>>();
-    let db_rdy = "DBWIN_DATA_READY\0".encode_utf16().collect::<Vec<u16>>();
-    let h_ack = unsafe { CreateEventW(Some(&sa), BOOL(0), BOOL(0), PCWSTR(db_ack.as_ptr())) }.unwrap();
-    let h_rdy = unsafe { CreateEventW(Some(&sa), BOOL(0), BOOL(0), PCWSTR(db_rdy.as_ptr())) }.unwrap();
+    let h_ack = unsafe { CreateEventW(Some(&sa), BOOL(0), BOOL(0), PCWSTR(u16cstr!("DBWIN_BUFFER_READY").as_ptr())) }.unwrap();
+    let h_rdy = unsafe { CreateEventW(Some(&sa), BOOL(0), BOOL(0), PCWSTR(u16cstr!("DBWIN_DATA_READY").as_ptr())) }.unwrap();
 
     let log_size = 8192u32;
-    let db = "DBWIN_BUFFER\0".encode_utf16().collect::<Vec<u16>>();
+    let db = u16cstr!("DBWIN_BUFFER");
     let fh = unsafe { CreateFileMappingW(INVALID_HANDLE_VALUE, Some(&sa), PAGE_READWRITE, 0, log_size, PCWSTR(db.as_ptr())) }.unwrap();
 
     let pid = unsafe { GetCurrentProcessId() };
@@ -214,15 +213,12 @@ fn create_resources(device: &ID3D12Device, width: u32, height: u32) -> Resource 
         let mut err: Option<ID3DBlob> = None;
         unsafe { D3D12SerializeRootSignature(&root_desc, D3D_ROOT_SIGNATURE_VERSION_1_0, &mut root_sig_blob, Some(&mut err)) }.unwrap();
         let root_sig_blob = root_sig_blob.unwrap();
-        let ary = unsafe { std::ptr::slice_from_raw_parts(root_sig_blob.GetBufferPointer() as *const u8, root_sig_blob.GetBufferSize()) };
+        let ary = unsafe { std::ptr::slice_from_raw_parts(root_sig_blob.GetBufferPointer() as _, root_sig_blob.GetBufferSize()) };
         unsafe { device.CreateRootSignature(0, &*ary) }.unwrap()
     };
 
     // DLL load path for dxil.dll
-    {
-        let path = "../dll\0".encode_utf16().collect::<Vec<u16>>();
-        unsafe { SetDllDirectoryW(PCWSTR(path.as_ptr())) };
-    }
+    unsafe { SetDllDirectoryW(PCWSTR(u16cstr!("../dll").as_ptr())) };
 
     // Craete a PSO
     let pso: ID3D12PipelineState;
@@ -266,10 +262,10 @@ float4 main(Input input) : SV_Target {
         let dxclib: IDxcLibrary = unsafe { DxcCreateInstance(&CLSID_DxcLibrary) }.unwrap();
 
         let txt_scene_vs = unsafe {
-            dxclib.CreateBlobWithEncodingFromPinned(code_scene_vs.as_ptr() as *const c_void, code_scene_vs.len().try_into().unwrap(), DXC_CP_UTF8)
+            dxclib.CreateBlobWithEncodingFromPinned(code_scene_vs.as_ptr() as _, code_scene_vs.len().try_into().unwrap(), DXC_CP_UTF8)
         }.unwrap();
         let txt_scene_ps = unsafe {
-            dxclib.CreateBlobWithEncodingFromPinned(code_scene_ps.as_ptr() as *const c_void, code_scene_ps.len().try_into().unwrap(), DXC_CP_UTF8)
+            dxclib.CreateBlobWithEncodingFromPinned(code_scene_ps.as_ptr() as _, code_scene_ps.len().try_into().unwrap(), DXC_CP_UTF8)
         }.unwrap();
 
         let mut shader_args_u16: [_; 3] = array_init::array_init(|i| {
@@ -279,9 +275,9 @@ float4 main(Input input) : SV_Target {
         let shader_args_p: [_; 3] = array_init::array_init(|i| {
             PWSTR(shader_args_u16[i].as_mut_ptr())
         });
-        let entry = "main\0".encode_utf16().collect::<Vec<u16>>();
-        let profile_vs = "vs_6_0\0".encode_utf16().collect::<Vec<u16>>();
-        let profile_ps = "ps_6_0\0".encode_utf16().collect::<Vec<u16>>();
+        let entry = u16cstr!("main");
+        let profile_vs = u16cstr!("vs_6_0");
+        let profile_ps = u16cstr!("ps_6_0");
 
         let res_scene_vs = unsafe {
             dxc.Compile(&txt_scene_vs, None, PCWSTR(entry.as_ptr()),
@@ -528,10 +524,8 @@ float4 main(Input input) : SV_Target {
         let info: &BitmapInfoHeader = unsafe { &std::slice::from_raw_parts(info_data.as_ptr() as *const BitmapInfoHeader, 1)[0] };
         p = (p as usize + std::mem::size_of::<BitmapInfoHeader>()) as *const u8; // 40byte
 
-        let mut oneline: Vec<u8> = Vec::new();
-        oneline.resize(info.width as usize * 3, 0); // rgb
-        let mut data: Vec<u8> = Vec::new();
-        data.resize(info.width as usize * info.height as usize * 4, 0);
+        let mut oneline: Vec<u8> = vec![0; info.width as usize * 3]; // rgb
+        let mut data: Vec<u8> = vec![0; info.width as usize * info.height as usize * 4]; // rgba
         for y in 0..info.height {
             unsafe { libc::memcpy(oneline.as_mut_ptr() as _, p as _, oneline.len()) };
             p = (p as usize + oneline.len()) as *const u8;
@@ -548,8 +542,7 @@ float4 main(Input input) : SV_Target {
     let generate_mipmap = |mip0: ImageData| {
         let downsample = |high: &ImageData| {
             let ext: [u32; 3] = [1.max(high.extent[0] / 2), 1.max(high.extent[1] / 2), 1];
-            let mut data: Vec<u8> = Vec::new();
-            data.resize(ext[0] as usize * ext[1] as usize * 4, 0);
+            let mut data: Vec<u8> = vec![0; ext[0] as usize * ext[1] as usize * 4];
             for y in 0..ext[1] {
                 for x in 0..ext[0] { 
                     let pd = y * ext[0] + x;
@@ -1050,15 +1043,13 @@ extern "system" fn wndproc(
 }
 
 pub fn setup_window(width: u32, height: u32) -> HWND {
-    let class_name = "WindowClass\0".encode_utf16().collect::<Vec<u16>>();
-
     let wcex = WNDCLASSEXW {
         cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
         style: CS_HREDRAW | CS_VREDRAW,
         lpfnWndProc: Some(wndproc),
         hInstance: unsafe { GetModuleHandleW(None).unwrap() },
         hCursor: unsafe { LoadCursorW(None, IDC_ARROW).unwrap() },
-        lpszClassName: PCWSTR(class_name.as_ptr()),
+        lpszClassName: PCWSTR(u16cstr!("WindowClass").as_ptr()),
         ..Default::default()
     };
     assert_ne!(unsafe { RegisterClassExW(&wcex) }, 0);
@@ -1073,8 +1064,8 @@ pub fn setup_window(width: u32, height: u32) -> HWND {
 
     let hwnd = unsafe { CreateWindowExW(
         Default::default(),
-        PCWSTR(class_name.as_ptr()),
-        PCWSTR("Window\0".encode_utf16().collect::<Vec<u16>>().as_ptr()),
+        PCWSTR(u16cstr!("WindowClass").as_ptr()),
+        PCWSTR(u16cstr!("Window").as_ptr()),
         WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, 0, window_width, window_height,
         None, None, None, None
     ) };
