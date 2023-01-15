@@ -1,7 +1,5 @@
-// Dxc doesn't use in this sample
-#[allow(unused_imports)]
 use windows::{
-    core::*, Win32::Foundation::*, Win32::Graphics::Direct3D::Dxc::*, Win32::Graphics::Direct3D::*,
+    core::*, Win32::Foundation::*, Win32::Graphics::Direct3D::*,
     Win32::Graphics::Direct3D12::*, Win32::Graphics::Dxgi::Common::*, Win32::Graphics::Dxgi::*,
     Win32::System::LibraryLoader::*, Win32::System::Threading::*,
     Win32::UI::WindowsAndMessaging::*,
@@ -9,6 +7,7 @@ use windows::{
 };
 use std::sync::{Arc, atomic::AtomicUsize};
 use libc::{c_uint, c_char};
+use widestring::*;
 
 const BUFFER_COUNT: u32 = 3;
 
@@ -17,7 +16,7 @@ macro_rules! align {
     ($val:expr, $align:expr) => {{
         let a = $val as usize;
         let b = $align as usize;
-        (a + b - 1) & !(b - 1)
+        ((a + b - 1) & !(b - 1)).try_into().unwrap()
     }}
 }
 
@@ -25,6 +24,9 @@ pub trait D3DBase {
     fn draw(&mut self);
     fn present(&mut self) -> Result<()>;
     fn wait(&mut self) -> Result<()>;
+}
+
+pub trait D3DTest {
     fn get_image(&mut self) -> (&ID3D12CommandQueue, &ID3D12Resource);
 }
 
@@ -42,13 +44,11 @@ pub fn catch_up_d3d_log(log_atomic: Arc::<AtomicUsize>) -> std::thread::JoinHand
     unsafe { InitializeSecurityDescriptor(PSECURITY_DESCRIPTOR(&sd as *const _ as *mut _), 1) };
     unsafe { SetSecurityDescriptorDacl(PSECURITY_DESCRIPTOR(&sd as *const _ as *mut _), BOOL(1), None, BOOL(0)) };
 
-    let db_ack = "DBWIN_BUFFER_READY\0".encode_utf16().collect::<Vec<u16>>();
-    let db_rdy = "DBWIN_DATA_READY\0".encode_utf16().collect::<Vec<u16>>();
-    let h_ack = unsafe { CreateEventW(Some(&sa), BOOL(0), BOOL(0), PCWSTR(db_ack.as_ptr())) }.unwrap();
-    let h_rdy = unsafe { CreateEventW(Some(&sa), BOOL(0), BOOL(0), PCWSTR(db_rdy.as_ptr())) }.unwrap();
+    let h_ack = unsafe { CreateEventW(Some(&sa), BOOL(0), BOOL(0), PCWSTR(u16cstr!("DBWIN_BUFFER_READY").as_ptr())) }.unwrap();
+    let h_rdy = unsafe { CreateEventW(Some(&sa), BOOL(0), BOOL(0), PCWSTR(u16cstr!("DBWIN_DATA_READY").as_ptr())) }.unwrap();
 
     let log_size = 8192u32;
-    let db = "DBWIN_BUFFER\0".encode_utf16().collect::<Vec<u16>>();
+    let db = u16cstr!("DBWIN_BUFFER");
     let fh = unsafe { CreateFileMappingW(INVALID_HANDLE_VALUE, Some(&sa), PAGE_READWRITE, 0, log_size, PCWSTR(db.as_ptr())) }.unwrap();
 
     let pid = unsafe { GetCurrentProcessId() };
@@ -337,7 +337,10 @@ impl D3DBase for D3D {
         }
         Ok(())
     }
-    
+}
+
+impl D3DTest for D3D
+{
     fn get_image(&mut self) -> (&ID3D12CommandQueue, &ID3D12Resource)
     {
         let r = self.swap_chain_tex.as_ref().unwrap();
@@ -359,15 +362,13 @@ extern "system" fn wndproc(
 }
 
 pub fn setup_window(width: u32, height: u32) -> HWND {
-    let class_name = "WindowClass\0".encode_utf16().collect::<Vec<u16>>();
-
     let wcex = WNDCLASSEXW {
         cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
         style: CS_HREDRAW | CS_VREDRAW,
         lpfnWndProc: Some(wndproc),
         hInstance: unsafe { GetModuleHandleW(None).unwrap() },
         hCursor: unsafe { LoadCursorW(None, IDC_ARROW).unwrap() },
-        lpszClassName: PCWSTR(class_name.as_ptr()),
+        lpszClassName: PCWSTR(u16cstr!("WindowClass").as_ptr()),
         ..Default::default()
     };
     assert_ne!(unsafe { RegisterClassExW(&wcex) }, 0);
@@ -382,15 +383,14 @@ pub fn setup_window(width: u32, height: u32) -> HWND {
 
     let hwnd = unsafe { CreateWindowExW(
         Default::default(),
-        PCWSTR(class_name.as_ptr()),
-        PCWSTR("Window\0".encode_utf16().collect::<Vec<u16>>().as_ptr()),
+        PCWSTR(u16cstr!("WindowClass").as_ptr()),
+        PCWSTR(u16cstr!("Window").as_ptr()),
         WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, 0, window_width, window_height,
         None, None, None, None
     ) };
     assert_ne!(hwnd.0, 0);
 
     unsafe { ShowWindow(hwnd, SW_SHOW) };
-
     hwnd
 }
 

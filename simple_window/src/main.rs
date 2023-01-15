@@ -3,6 +3,7 @@ use windows::{
     Win32::System::LibraryLoader::*,
     Win32::UI::WindowsAndMessaging::*,
 };
+use widestring::*;
 
 static WINDOW_WIDTH: u32 = 640;
 static WINDOW_HEIGHT: u32 = 360;
@@ -27,7 +28,7 @@ fn setup_window(width: u32, height: u32) -> HWND {
         lpfnWndProc: Some(wndproc),
         hInstance: unsafe { GetModuleHandleW(None).unwrap() },
         hCursor: unsafe { LoadCursorW(None, IDC_ARROW).unwrap() },
-        lpszClassName: PCWSTR("WindowClass\0".encode_utf16().collect::<Vec<u16>>().as_ptr()),
+        lpszClassName: PCWSTR(u16cstr!("WindowClass").as_ptr()),
         ..Default::default()
     };
     assert_ne!(unsafe { RegisterClassExW(&wcex) }, 0);
@@ -42,15 +43,14 @@ fn setup_window(width: u32, height: u32) -> HWND {
 
     let hwnd = unsafe { CreateWindowExW(
         Default::default(),
-        PCWSTR("WindowClass\0".encode_utf16().collect::<Vec<u16>>().as_ptr()),
-        PCWSTR("Window\0".encode_utf16().collect::<Vec<u16>>().as_ptr()),
+        PCWSTR(u16cstr!("WindowClass").as_ptr()),
+        PCWSTR(u16cstr!("Window").as_ptr()),
         WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, 0, window_width, window_height,
         None, None, None, None
     ) };
     assert_ne!(hwnd.0, 0);
 
     unsafe { ShowWindow(hwnd, SW_SHOW) };
-
     hwnd
 }
 

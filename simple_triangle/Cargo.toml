@@ -11,6 +11,7 @@ build = "build.rs"
 array-init = "2.1.0"
 directx_math = "0.2.2"
 libc = "*"
+widestring = "*"
 
 [dev-dependencies]
 rust-crypto = "0.2.36"

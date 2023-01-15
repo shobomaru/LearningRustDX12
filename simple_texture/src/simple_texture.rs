@@ -275,13 +275,10 @@ float4 main(Input input) : SV_Target {
         let shader_args_p: [_; 3] = array_init::array_init(|i| {
             PWSTR(shader_args_u16[i].as_mut_ptr())
         });
-        let entry = u16cstr!("main");
-        let profile_vs = u16cstr!("vs_6_0");
-        let profile_ps = u16cstr!("ps_6_0");
 
         let res_scene_vs = unsafe {
-            dxc.Compile(&txt_scene_vs, None, PCWSTR(entry.as_ptr()),
-                PCWSTR(profile_vs.as_ptr()), Some(&shader_args_p), &[] as _, None)
+            dxc.Compile(&txt_scene_vs, None, PCWSTR(u16cstr!("main").as_ptr()),
+                PCWSTR(u16cstr!("vs_6_0").as_ptr()), Some(&shader_args_p), &[] as _, None)
         }.unwrap();
         if unsafe { res_scene_vs.GetStatus().unwrap() } != S_OK {
             panic!("{}", unsafe { CString::from_raw(res_scene_vs.GetErrorBuffer().unwrap().GetBufferPointer() as *mut i8).to_string_lossy().to_string() });
@@ -289,8 +286,8 @@ float4 main(Input input) : SV_Target {
         let bin_scene_vs = unsafe { res_scene_vs.GetResult() }.unwrap();
 
         let res_scene_ps = unsafe {
-            dxc.Compile(&txt_scene_ps, None, PCWSTR(entry.as_ptr()),
-                PCWSTR(profile_ps.as_ptr()), Some(&shader_args_p), &[] as _, None)
+            dxc.Compile(&txt_scene_ps, None, PCWSTR(u16cstr!("main").as_ptr()),
+                PCWSTR(u16cstr!("ps_6_0").as_ptr()), Some(&shader_args_p), &[] as _, None)
         }.unwrap();
         if unsafe { res_scene_ps.GetStatus().unwrap() } != S_OK {
             panic!("{}", unsafe { CString::from_raw(res_scene_ps.GetErrorBuffer().unwrap().GetBufferPointer() as *mut i8).to_string_lossy().to_string() });
@@ -378,8 +375,7 @@ float4 main(Input input) : SV_Target {
     struct vertex_element([f32; 3], [f32; 3], [f32; 2]);
     #[repr(C)]
     struct quad_index_list([u16; 6]);
-    let mut vertices: Vec<vertex_element> = Vec::new();
-    vertices.reserve(((SPHERE_STACKS + 1) * (SPHERE_SLICES + 1)) as usize);
+    let mut vertices: Vec<vertex_element> = Vec::with_capacity(((SPHERE_STACKS + 1) * (SPHERE_SLICES + 1)) as usize);
     for y in 0..=SPHERE_STACKS {
         for x in 0..=SPHERE_SLICES {
             let v0 = x as f32 / SPHERE_SLICES as f32;
@@ -393,8 +389,7 @@ float4 main(Input input) : SV_Target {
             vertices.push(vertex_element(pos, norm, uv));
         }
     }
-    let mut indices: Vec<quad_index_list> = Vec::new();
-    indices.reserve((SPHERE_STACKS * SPHERE_SLICES) as usize);
+    let mut indices: Vec<quad_index_list> = Vec::with_capacity((SPHERE_STACKS * SPHERE_SLICES) as usize);
     for y in 0..SPHERE_STACKS {
         for x in 0..SPHERE_SLICES {
             let b: u16 = (y * (SPHERE_SLICES + 1) + x).try_into().unwrap();
@@ -1072,7 +1067,6 @@ pub fn setup_window(width: u32, height: u32) -> HWND {
     assert_ne!(hwnd.0, 0);
 
     unsafe { ShowWindow(hwnd, SW_SHOW) };
-
     hwnd
 }
 
