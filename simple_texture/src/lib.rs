@@ -17,7 +17,7 @@ mod tests {
 
     #[test]
     fn test_image() {
-        let expected_sha1 = "6a0ba3e9c8b9cd812e8ada993e5d60351bc43b76";
+        let expected_sha1 = "b0ec33cc7ede9b5d7e818705ffb966257f49ac26";
         let mut rendered_sha1 = String::new();
 
         let dbg_atomic = Arc::new(AtomicUsize::new(0));

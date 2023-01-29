@@ -544,7 +544,7 @@ float4 main(Input input) : SV_Target {
                     let ps = 2 * y * 2 * ext[0] + 2 * x;
                     for c in 0..4 {
                         let mut d = high.data[ps as usize * 4 + c] as u32;
-                        d += high.data[ps as usize * 4 + 1 * 4 * c] as u32;
+                        d += high.data[ps as usize * 4 + 1 * 4 + c] as u32;
                         d += high.data[ps as usize * 4 + high.extent[0] as usize * 4 + c] as u32;
                         d += high.data[ps as usize * 4 + high.extent[0] as usize * 4 + 1 * 4 + c] as u32;
                         data[pd as usize * 4 + c] = ((d + 2) / 4).try_into().unwrap();
