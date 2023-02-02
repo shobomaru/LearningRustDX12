@@ -37,3 +37,9 @@ jobs:
     - name: Run tests (simple_texture)
       run: cargo test --verbose
       working-directory: ./simple_texture
+    - name: Build (shadow_map)
+      run: cargo build --verbose
+      working-directory: ./shadow_map
+    - name: Run tests (shadow_map)
+      run: cargo test --verbose
+      working-directory: ./shadow_map
