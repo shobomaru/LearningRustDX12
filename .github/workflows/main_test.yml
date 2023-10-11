@@ -2,9 +2,9 @@ name: main_test
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main", "test" ]
   pull_request:
-    branches: [ "main" ]
+    branches: [ "main", "test" ]
 
 env:
   CARGO_TERM_COLOR: always
@@ -43,3 +43,9 @@ jobs:
     - name: Run tests (shadow_map)
       run: cargo test --verbose
       working-directory: ./shadow_map
+    - name: Save artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: build-binaries
+        path: ${{ github.workspace }}/**/*.exe
+        if-no-files-found: error
